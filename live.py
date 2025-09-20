@@ -1,0 +1,123 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# 🏷️ Page Setup
+st.set_page_config(page_title="Shopsy Dashboard", layout="wide")
+st.title("🛍️ Shopsy Performance Dashboard")
+
+# 📂 File Upload
+uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=["csv", "xlsx"])
+
+if uploaded_file:
+    # 📊 Load Data
+    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+    st.success("File uploaded successfully!")
+
+    # 🧾 Show Columns
+    st.write("Columns in your file:", df.columns.tolist())
+
+    # 🧮 Filters
+    st.sidebar.header("🔍 Filters")
+    date_filter = st.sidebar.date_input("Select Date Range", []) if "Date" in df.columns else []
+    wm_filter = st.sidebar.multiselect("WM Name", df["WM Name"].unique()) if "WM Name" in df.columns else []
+    profile_filter = st.sidebar.multiselect("Profile ID", df["Profile ID"].unique()) if "Profile ID" in df.columns else []
+    vendor_filter = st.sidebar.multiselect("Vendor ID", df["Vendor ID"].unique()) if "Vendor ID" in df.columns else []
+
+    # 🧼 Apply Filters
+    filtered_df = df.copy()
+    if "Date" in df.columns and len(date_filter) == 2:
+        filtered_df = filtered_df[
+            (pd.to_datetime(filtered_df["Date"]) >= pd.to_datetime(date_filter[0])) &
+            (pd.to_datetime(filtered_df["Date"]) <= pd.to_datetime(date_filter[1]))
+        ]
+    if wm_filter: filtered_df = filtered_df[filtered_df["WM Name"].isin(wm_filter)]
+    if profile_filter: filtered_df = filtered_df[filtered_df["Profile ID"].isin(profile_filter)]
+    if vendor_filter: filtered_df = filtered_df[filtered_df["Vendor ID"].isin(vendor_filter)]
+
+    # 📈 KPI Calculations
+    def safe_sum(col): return filtered_df[col].sum() if col in filtered_df.columns else 0
+
+    total_assigned = safe_sum("Assigned")
+    total_delivered = safe_sum("Delivered")
+    conversion_rate = round((total_delivered / total_assigned) * 100, 2) if total_assigned else 0
+    total_payout = safe_sum("Payout")
+    shopsy_delivered = safe_sum("Shopsy Delivered")
+    shopsy_payout = safe_sum("Shopsy Payout")
+    shopsy_rate_card = round((shopsy_payout / shopsy_delivered), 2) if shopsy_delivered else 0
+    document_delivered = safe_sum("number of document delivered")
+    document_payout = round(document_delivered * 9, 2)
+    document_rate_card = round((document_payout / document_delivered), 2) if document_delivered else 0
+    non_shopsy_delivered = total_delivered - shopsy_delivered - document_delivered
+    non_shopsy_payout = total_payout - shopsy_payout - document_payout
+    non_shopsy_rate_card = round((non_shopsy_payout / non_shopsy_delivered), 2) if non_shopsy_delivered else 0
+    total_U2S = safe_sum("total U2S")
+    total_non_U2S = non_shopsy_delivered - total_U2S
+
+    # 📌 KPI Display
+    st.subheader("📊 Key Performance Indicators")
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric("Total Assigned", total_assigned)
+    kpi_cols[1].metric("Total Delivered", total_delivered)
+    kpi_cols[2].metric("Conversion Rate (%)", conversion_rate)
+    kpi_cols[3].metric("Total Payout", f"₹{total_payout:,.2f}")
+
+    kpi_cols2 = st.columns(3)
+    kpi_cols2[0].metric("Shopsy Delivered", shopsy_delivered)
+    kpi_cols2[1].metric("Shopsy Payout", f"₹{shopsy_payout:,.2f}")
+    kpi_cols2[2].metric("Shopsy Rate Card", f"₹{shopsy_rate_card:,.2f}")
+
+    kpi_cols3 = st.columns(3)
+    kpi_cols3[0].metric("Document Delivered", document_delivered)
+    kpi_cols3[1].metric("Document Payout", f"₹{document_payout:,.2f}")
+    kpi_cols3[2].metric("Document Rate Card", f"₹{document_rate_card:,.2f}")
+
+    kpi_cols4 = st.columns(3)
+    kpi_cols4[0].metric("Non-Shopsy Delivered", non_shopsy_delivered)
+    kpi_cols4[1].metric("Non-Shopsy Payout", f"₹{non_shopsy_payout:,.2f}")
+    kpi_cols4[2].metric("Non-Shopsy Rate Card", f"₹{non_shopsy_rate_card:,.2f}")
+
+    kpi_cols5 = st.columns(2)
+    kpi_cols5[0].metric("Total U2S", total_U2S)
+    kpi_cols5[1].metric("Total Non-U2S", total_non_U2S)
+
+    # 📈 Charts Section
+    st.subheader("📈 Performance Charts")
+
+    if "Date" in filtered_df.columns:
+        filtered_df["Date"] = pd.to_datetime(filtered_df["Date"])
+        daily_kpi = filtered_df.groupby("Date").agg({
+            "Assigned": "sum",
+            "Delivered": "sum",
+            "Payout": "sum",
+            "Shopsy Delivered": "sum",
+            "Shopsy Payout": "sum",
+            "number of document delivered": "sum",
+            "total U2S": "sum"
+        }).reset_index()
+
+        daily_kpi["Non-Shopsy Payout"] = daily_kpi["Payout"] - daily_kpi["Shopsy Payout"] - (daily_kpi["number of document delivered"] * 9)
+        daily_kpi["Non-U2S"] = daily_kpi["Delivered"] - daily_kpi["Shopsy Delivered"] - daily_kpi["number of document delivered"] - daily_kpi["total U2S"]
+
+        st.plotly_chart(px.line(daily_kpi, x="Date", y=["Assigned", "Delivered"], title="Assigned vs Delivered Over Time"), use_container_width=True)
+        st.plotly_chart(px.area(daily_kpi, x="Date", y="Payout", title="Total Payout Over Time"), use_container_width=True)
+        st.plotly_chart(px.bar(daily_kpi, x="Date", y=["Shopsy Delivered", "number of document delivered"], barmode="group", title="Shopsy vs Document Deliveries"), use_container_width=True)
+        st.plotly_chart(px.line(daily_kpi, x="Date", y=["Shopsy Payout", "Non-Shopsy Payout"], title="Shopsy vs Non-Shopsy Payout"), use_container_width=True)
+        st.plotly_chart(px.area(daily_kpi, x="Date", y=["total U2S", "Non-U2S"], title="U2S vs Non-U2S Deliveries"), use_container_width=True)
+
+    # 📋 Data Table
+    st.subheader("📄 Filtered Data Table")
+    st.dataframe(filtered_df)
+
+    # 🧠 Summary Section
+    st.subheader("🧠 Summary Overview")
+    st.markdown(f"""
+    - **Delivery Efficiency**: {conversion_rate}% conversion from assigned to delivered.
+    - **Shopsy Contribution**: ₹{shopsy_payout:,.2f} payout from {shopsy_delivered} deliveries.
+    - **Document Deliveries**: {document_delivered} documents delivered with ₹{document_payout:,.2f} payout.
+    - **Non-Shopsy Segment**: ₹{non_shopsy_payout:,.2f} payout across {non_shopsy_delivered} deliveries.
+    - **U2S Breakdown**: {total_U2S} U2S vs {total_non_U2S} Non-U2S deliveries.
+    - **Total Payout**: ₹{total_payout:,.2f} across all segments.
+    """)
+else:
+    st.info("📁 Please upload a file to begin.")
